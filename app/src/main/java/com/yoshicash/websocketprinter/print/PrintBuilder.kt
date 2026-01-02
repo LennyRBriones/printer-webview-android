@@ -7,6 +7,10 @@ class PrintBuilder(val order: Order) {
     fun generateKitchenOrderTicket() : String {
         var pText = ""
 
+        if (order.cash == true) {
+            pText += "[C]<reverse><b>POR PAGAR EN EFECTIVO</b></reverse>\n"
+            pText += "[L]\n"
+        }
         pText += "[C]<u><font size='big'>Yoshicash</font></u>\n"
         pText += "[L]\n"
         pText +=  "[C]<u><font size='tall'>#${order.saleCode}</font></u>\n"

@@ -8,7 +8,8 @@ data class Order(
     val sellerName: String = "",
     val concessionName: String = "",
     val products: List<Product> = emptyList(),
-    val forcePrint: Int = 0
+    val forcePrint: Int = 0,
+    val cash: Boolean? = null
 ) : Serializable
 
 data class Product(
@@ -16,4 +17,3 @@ data class Product(
     val quantity : Int = 0,
     val comment : List<String> = emptyList()
 ) : Serializable
-
