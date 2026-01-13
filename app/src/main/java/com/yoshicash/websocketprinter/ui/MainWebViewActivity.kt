@@ -30,26 +30,50 @@ import com.yoshicash.websocketprinter.manager.PrintManager
 import com.yoshicash.websocketprinter.utils.EnvironmentConfig.getDashboardURl
 import com.yoshicash.websocketprinter.utils.requestBluetoothPermissions
 import com.yoshicash.websocketprinter.utils.requestLocalizationPermissions
+import androidx.core.content.edit
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 class MainWebViewActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainWebViewBinding
     private lateinit var printManager: PrintManager
-    private var wasOffline = false
+
     private lateinit var cm: ConnectivityManager
 
-    private val networkCallback  = object : ConnectivityManager.NetworkCallback() {
+    private val mainHandler by lazy { android.os.Handler(android.os.Looper.getMainLooper()) }
+    private var pendingOnlineReload: Runnable? = null
+
+    private var wasOffline = false
+
+    private val initialUrl by lazy { getDashboardURl() }
+
+    private companion object {
+        private const val PREFS_NAME = "webview_prefs"
+        private const val KEY_LAST_URL = "last_url"
+    }
+
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            if (wasOffline) {
-                wasOffline = false
-                runOnUiThread {
+            if (!wasOffline) return
+
+            wasOffline = false
+            pendingOnlineReload?.let { mainHandler.removeCallbacks(it) }
+            pendingOnlineReload = Runnable {
+                if (!isFinishing && !isDestroyed) {
                     binding.wbMain.reload()
                 }
+            }.also {
+                mainHandler.postDelayed(it, 1500L)
             }
         }
 
         override fun onLost(network: Network) {
             wasOffline = true
+            pendingOnlineReload?.let { mainHandler.removeCallbacks(it) }
+            pendingOnlineReload = null
         }
 
         override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
@@ -58,13 +82,13 @@ class MainWebViewActivity : AppCompatActivity() {
         }
     }
 
-    // Guarda la URL inicial para usarla si no hay estado que restaurar
-    private val initialUrl by lazy { getDashboardURl() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainWebViewBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        applySystemBarsInsets()
 
         init()
 
@@ -72,7 +96,9 @@ class MainWebViewActivity : AppCompatActivity() {
         if (savedInstanceState != null) {
             binding.wbMain.restoreState(savedInstanceState)
         } else {
-            binding.wbMain.loadUrl(initialUrl)
+            val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            val lastUrl = prefs.getString(KEY_LAST_URL, null)
+            binding.wbMain.loadUrl(lastUrl ?: initialUrl)
         }
         binding.mainSwipeLayout.isEnabled = false
     }
@@ -91,8 +117,9 @@ class MainWebViewActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        CookieManager.getInstance().flush()
         super.onStop()
-        cm.unregisterNetworkCallback(networkCallback)
+        runCatching { cm.unregisterNetworkCallback(networkCallback) }
     }
 
     private fun init() {
@@ -148,6 +175,7 @@ class MainWebViewActivity : AppCompatActivity() {
         with(webView.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
+            cacheMode = WebSettings.LOAD_DEFAULT
             mediaPlaybackRequiresUserGesture = false
             // Mejora compatibilidad con sitios modernos:
             mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
@@ -158,6 +186,7 @@ class MainWebViewActivity : AppCompatActivity() {
             loadWithOverviewMode = true
             builtInZoomControls = false
             displayZoomControls = false
+            javaScriptCanOpenWindowsAutomatically = true
         }
 
         // Cookies persistentes (evita “perder sesión” si el sitio usa cookies)
@@ -170,24 +199,45 @@ class MainWebViewActivity : AppCompatActivity() {
                 view: WebView,
                 request: WebResourceRequest
             ): Boolean {
-                // Abre todo en el mismo WebView (incluye target=_blank)
-                view.loadUrl(request.url.toString())
-                return true
+                val uri = request.url
+                val scheme = uri.scheme ?: return false
+
+                if (scheme == "http" || scheme == "https") return false
+
+                return try {
+                    startActivity(Intent(Intent.ACTION_VIEW, uri))
+                    true
+                } catch (_: Exception) {
+                    false
+                }
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 // Termina animación del refresh cuando acabe la carga
                 binding.mainSwipeLayout.isRefreshing = false
+
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+                    .edit {
+                        putString(KEY_LAST_URL, url)
+                    }
+
+                CookieManager.getInstance().flush()
             }
         }
 
         webView.webChromeClient = object : WebChromeClient() {
-            // Si quieres mostrar un ProgressBar en la toolbar, puedes hacerlo aquí:
-            // override fun onProgressChanged(view: WebView?, newProgress: Int) { ... }
+            override fun onCreateWindow(
+                view: WebView,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: android.os.Message
+            ): Boolean {
+                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                transport.webView = view
+                resultMsg.sendToTarget()
+                return true
+            }
         }
-
-        webView.resumeTimers()
-        webView.onResume()
 
         webView.addJavascriptInterface(
             AndroidBridge(this, Gson()),
@@ -215,6 +265,7 @@ class MainWebViewActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        CookieManager.getInstance().flush()
         super.onPause()
         binding.wbMain.onPause()
         binding.wbMain.pauseTimers()
@@ -224,5 +275,33 @@ class MainWebViewActivity : AppCompatActivity() {
         super.onResume()
         binding.wbMain.onResume()
         binding.wbMain.resumeTimers()
+    }
+
+    override fun onDestroy() {
+        binding.wbMain.apply {
+            stopLoading()
+            webChromeClient = null
+            webViewClient = WebViewClient()
+            removeJavascriptInterface("AndroidBridge")
+            destroy()
+        }
+        super.onDestroy()
+    }
+
+    private fun applySystemBarsInsets() {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
+        WindowCompat.getInsetsController(window, binding.root).apply {
+            show(WindowInsetsCompat.Type.statusBars())
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
+
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            val sysInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            v.setPadding(sysInsets.left, sysInsets.top, sysInsets.right, sysInsets.bottom)
+            insets
+        }
     }
 }

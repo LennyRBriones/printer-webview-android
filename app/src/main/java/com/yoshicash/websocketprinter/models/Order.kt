@@ -1,5 +1,6 @@
 package com.yoshicash.websocketprinter.models
 
+import com.google.gson.annotations.SerializedName
 import java.io.Serializable
 
 data class Order(
@@ -9,7 +10,8 @@ data class Order(
     val concessionName: String = "",
     val products: List<Product> = emptyList(),
     val forcePrint: Int = 0,
-    val cash: Boolean? = null
+    @SerializedName("cash_amount")
+    val cashAmount: Double? = null
 ) : Serializable
 
 data class Product(
