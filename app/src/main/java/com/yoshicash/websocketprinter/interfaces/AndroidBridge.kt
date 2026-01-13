@@ -11,6 +11,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AndroidBridge(
     private val context: Context,
@@ -23,16 +26,20 @@ class AndroidBridge(
 
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    private val ordersMutex = Mutex()
+
     @JavascriptInterface
     fun printBl(strOrderObj: String) {
         log("printBl input: $strOrderObj")
 
         bridgeScope.launch {
-            val order = parseOrder(strOrderObj)
-                ?: run {
-                    Log.e(TAG, "JSON inválido de Order. No se imprime.")
-                    return@launch
-                }
+            val order = withContext(Dispatchers.Default) {
+                parseOrder(strOrderObj)
+            } ?: run {
+                Log.e(TAG, "JSON inválido de Order. No se imprime.")
+                return@launch
+            }
+
             addOrderToQueue(order)
         }
     }
@@ -49,23 +56,27 @@ class AndroidBridge(
     }
 
     private fun addOrderToQueue(order: Order) {
-        val sp = context.getSharedPreferences("kitchen_orders", MODE_PRIVATE)
-        val current: Set<String> = (sp.getStringSet("orders", emptySet()) ?: emptySet()).toSet()
-        val orderJson: String = gson.toJson(order)
+        bridgeScope.launch {
+            ordersMutex.withLock {
+                val sp = context.getSharedPreferences("kitchen_orders", MODE_PRIVATE)
+                val current: Set<String> = (sp.getStringSet("orders", emptySet()) ?: emptySet()).toSet()
+                val orderJson: String = gson.toJson(order)
 
-        val newSet: MutableSet<String> = current.toMutableSet()
+                val newSet: MutableSet<String> = current.toMutableSet()
 
-        val added: Boolean = newSet.add(orderJson)
-        if (added) {
-            sp.edit().putStringSet("orders", newSet).apply()
-            log("Nueva orden agregada a la cola (apply). size=${newSet.size}")
+                val added: Boolean = newSet.add(orderJson)
+                if (added) {
+                    sp.edit().putStringSet("orders", newSet).apply()
+                    log("Nueva orden agregada a la cola (apply). size=${newSet.size}")
 
-            PrintForegroundService.startIfNeeded(context)
+                    PrintForegroundService.startIfNeeded(context)
 
-            val verify = (sp.getStringSet("orders", emptySet()) ?: emptySet()).toSet()
-            log("Verificación SP -> size=${verify.size}")
-        } else {
-            log("Orden ya existía. size=${newSet.size}")
+                    val verify = (sp.getStringSet("orders", emptySet()) ?: emptySet()).toSet()
+                    log("Verificación SP -> size=${verify.size}")
+                } else {
+                    log("Orden ya existía. size=${newSet.size}")
+                }
+            }
         }
     }
 
