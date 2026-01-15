@@ -4,7 +4,7 @@ import com.yoshicash.websocketprinter.models.Order
 
 class PrintBuilder(val order: Order) {
 
-    fun generateKitchenOrderTicket() : String {
+    fun generateKitchenOrderTicket(): String {
         var pText = ""
 
         val amount = order.cashAmount
@@ -12,35 +12,41 @@ class PrintBuilder(val order: Order) {
             pText += "[C]<reverse><b>POR PAGAR $$amount EFECTIVO</b></reverse>\n"
             pText += "[L]\n"
         }
-        pText += "[C]<u><font size='big'>Yoshicash</font></u>\n"
+
+        pText += "[C]<b>Yoshicash</b>\n"
+
+        val printedAt = java.text.SimpleDateFormat("dd/MM/yy HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        pText += "[C]$printedAt\n"
+
+        if (order.concessionName.isNotBlank()) pText += "[C]${order.concessionName}\n"
+        if (order.sellerName.isNotBlank()) pText += "[C]Vendedor: ${order.sellerName}\n"
+
+        if (amount != null && amount > 0) {
+            pText += "[C]Pago en efectivo\n"
+        }
+
+        if (order.saleCode.isNotBlank()) {
+            pText += "[C]Tx: ${order.saleCode}\n"
+        }
+
         pText += "[L]\n"
-        pText +=  "[C]<u><font size='tall'>#${order.saleCode}</font></u>\n"
-        pText += "[L]\n"
-        pText += "[C]<u type='double'>Vendedor: ${order.sellerName}</u>"
-        pText += "[L]\n"
-        pText += "[L]\n"
-        pText += "[C]<u type='double'>Concesion: ${order.concessionName}</u>"
-        pText += "[L]\n"
-        pText += "[C]================================\n"
-        pText += "[L]\n"
-        pText += "[L]<b>Productos</b>\n"
-        pText += "[L]\n"
+
+        pText += "[L]<b>Consumo</b>\n"
 
         for (product in order.products.listIterator()) {
-            pText += "[L]<b>x${product.quantity} ${product.productName}</b>\n"
+            val qty = product.quantity
+            val name = product.productName
+            pText += "[L]x$qty $name\n"
 
             for (comment in product.comment) {
-                pText += "[L]$comment\n"
+                if (comment.isNotBlank()) pText += "[L]$comment\n"
             }
 
             pText += "[L]\n"
         }
 
-        pText += "[L]\n"
-        pText += "[C]================================"
-        pText += "[L] \n"
-        pText += "[L] \n"
-        pText += "[L] \n"
+        pText += "[L] \n[L] \n[L] \n"
 
         return pText
     }
