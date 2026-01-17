@@ -24,8 +24,8 @@ class PrintManager {
         mBluePrinter = EscPosPrinter(
             BluetoothPrintersConnections.selectFirstPaired(),
             203,
-            48f,
-            32,
+            52f,
+            36,
             EscPosCharsetEncoding("windows-1252", 16)
         )
 
